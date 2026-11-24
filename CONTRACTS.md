@@ -59,10 +59,20 @@ Flags idênticas em atacante e legítimo:
 **`results.csv`**: uma linha por corrida: chaves de `meta.json` + `containment_rps_refused`, `containment_rps_upstream`, `pft`, `pft_same_ip`, `pft_same_prefix`, `pft_control`, `goodput`, `p95`, `p99`, `cpu_pct`, `zone_states`, `late_events`, `computable`.
 `computable = false` quando falta o C1 pareado.
 
+## C-NET: rede sintética (valores fixos)
+
+- Namespace `gen`; veth `veth-h` (namespace raiz) ↔ `veth-g` (namespace `gen`).
+- IPv4 do veth: `10.77.255.1/30` (raiz) e `10.77.255.2/30` (`gen`). IPv6 do veth: `fd77:255::1/126` (raiz) e `fd77:255::2/126` (`gen`).
+- Nginx escuta em `LISTEN_HOST=10.77.255.1` e, para origens IPv6, em `LISTEN6_HOST=fd77:255::1`, nas portas `8081` (k1), `8082` (k2) e `8083` (k3). Testes automatizados usam portas ≥ 18000.
+- Alvo em `127.0.0.1:8080` (upstream do Nginx; não é alcançável de `gen`).
+- Prefixos de origem, com rota local e `IP_FREEBIND` em `gen`: atacante e legítimos sob ataque `10.66.0.0/16` e `fd12:3456:789a::/48`; Grupo_Controle `10.67.0.0/16` e `fd12:3456:789b::/48`, nunca usados pelo atacante.
+- Em S1, o SNAT acontece no `postrouting` do namespace `gen` (saída por `veth-g`) e reescreve só `10.66.0.0/16` para `10.77.255.2`; `10.67.0.0/16` não sofre SNAT. Tabela `nft` dedicada `testbed_nat`, nunca as tabelas do sistema (`ip nat` já existe e pertence a outro serviço).
+- Nenhum prefixo da rede sintética pode sobrepor `10.0.0.0/24` (LAN real), `100.64.0.0/10` (Tailscale), `26.0.0.0/8` (Radmin) ou `192.168.56.0/24` (VirtualBox).
+
 ## Mudança de contrato
 
 Qualquer alteração depois do congelamento é registrada neste arquivo, com data, e todos os consumidores são atualizados no mesmo commit.
 
 | Data | Contrato | Mudança | Consumidores atualizados |
 |---|---|---|---|
-| (nenhuma) | | | |
+| 2026-11-24 | C-NET | Seção acrescentada: endereços do veth (v4 e v6), portas, prefixos de origem e de controle, local do SNAT | nginx (T4), rede (T7), atacante (T8), legítimo (T9) |
