@@ -69,6 +69,87 @@ Flags idênticas em atacante e legítimo:
 - Em S1, o SNAT acontece no `postrouting` do namespace `gen` (saída por `veth-g`) e reescreve só `10.66.0.0/16` para `10.77.255.2`; `10.67.0.0/16` não sofre SNAT. Tabela `nft` dedicada `testbed_nat`, nunca as tabelas do sistema (`ip nat` já existe e pertence a outro serviço).
 - Nenhum prefixo da rede sintética pode sobrepor `10.0.0.0/24` (LAN real), `100.64.0.0/10` (Tailscale), `26.0.0.0/8` (Radmin) ou `192.168.56.0/24` (VirtualBox).
 
+## Formato do pool do atacante
+
+`--schedule` do atacante aponta um arquivo JSON com o pool de origens e os parâmetros de tráfego. Todos os campos são opcionais; os ausentes usam o padrão e uma flag passada na linha de comando vence o arquivo.
+
+| Campo | Tipo | Padrão | Significado |
+|---|---|---|---|
+| `per_24` | int | 8 | IPs por `/24` (v4) ou por `/64` (v6), com tolerância ±2 |
+| `pool_size` | int | 2000 | tamanho-alvo do pool de IPs de origem |
+| `client_24_count` | int | 5 | em S3, quantos `/24` de clientes (`10.66.1.0/24`…) pular; o atacante inclui `10.66.0.0/24` |
+| `p_repeat` | float | 0,02 | probabilidade de repetir um IP já usado (faixa 0,002–0,06) |
+| `post_ratio` | float | 0,3 | fração de requisições POST |
+| `heavy_ratio` | float | 0,5 | fração de requisições para `/heavy` |
+| `heavy_ms` | int | 200 | trabalho pedido em `/heavy?ms=` |
+| `waveform` | enum | `steady` | `steady`, `ramp`, `pulse` ou `waves` da taxa agregada |
+| `churn` | float | 0 | fração do pool rotacionada ao longo da corrida (0–1) |
+| `sticky_s` | float | 0 | tempo que um IP é mantido antes de rotacionar (0 = por requisição) |
+| `token_mode` | enum | `none` | `none`, `valid-reuse` ou `farm` para a chave K3 |
+| `token_budget` | int | 0 | teto de chamadas a `/token` na corrida inteira |
+| `token_path` | string | `/token` | rota de emissão de token |
+| `user_agents` | []string | pool interno | pool de User-Agent sorteado por requisição |
+| `headers` | [{name,value}] | pool interno | cabeçalhos extras sorteados por requisição |
+
+- Prefixos por cenário: S1 e S3 sorteiam de `10.66.0.0/16`; S2a rotaciona dentro de um único `/64` de `fd12:3456:789a::/48`. O atacante nunca usa os prefixos de controle `10.67.0.0/16` / `fd12:3456:789b::/48`.
+- Determinismo: dada `--seed`, o pool e a sequência (IP, método, UA, instante planejado) são fixos. Pipelining HTTP/1.1 real não existe em `net/http`; `--pipeline` apenas liga keep-alive e concentra requisições por conexão (limitação de realismo declarada no artigo).
+
+## Flags do atacante
+
+Toda flag abaixo também existe como campo no `--schedule` quando listada em "Formato do pool do atacante"; a flag na linha de comando vence o arquivo. As flags operacionais só existem na linha de comando.
+
+| Flag | Campo do schedule | Padrão | Significado |
+|---|---|---|---|
+| `--seed` | — | 1 | semente determinística; pool e planner usam streams PCG distintos derivados dela |
+| `--scenario` | — | `s1` | `s1`, `s2a` ou `s3` |
+| `--target` | — | (obrigatório) | URL do Nginx do grupo; só esquema e host (loopback, veth ou `$HOST_LAN_IP`), sem caminho, query, credenciais ou fragmento |
+| `--duration` | — | 60 | duração do ataque em s |
+| `--warmup` | — | 0 | aquecimento em s antes da onda (>= 0) |
+| `--rate` | — | 1000 | taxa média agregada em req/s |
+| `--out` | — | `attacker.jsonl` | arquivo JSONL de saída |
+| `--per-24` | `per_24` | 8 | IPs por `/24` (v4) ou `/64` (v6), tolerância ±2 |
+| `--p-repeat` | `p_repeat` | 0,02 | probabilidade de repetir um IP já usado (0,002–0,06) |
+| `--pool-size` | `pool_size` | 2000 | tamanho-alvo do pool de origens |
+| `--client-24` | `client_24_count` | 5 | em S3, quantos `/24` de clientes pular (>= 0) |
+| `--post-ratio` | `post_ratio` | 0,3 | fração de POST (0–1) |
+| `--heavy-ratio` | `heavy_ratio` | 0,5 | fração para `/heavy` (0–1) |
+| `--heavy-ms` | `heavy_ms` | 200 | trabalho pedido em `/heavy?ms=` (>= 0) |
+| `--waveform` | `waveform` | `steady` | `steady`, `ramp`, `pulse` ou `waves` |
+| `--churn` | `churn` | 0 | fração do pool rotacionada ao longo da corrida (0–1) |
+| `--sticky` | `sticky_s` | 0 | tempo que um IP é mantido antes de rotacionar em s (>= 0) |
+| `--token-mode` | `token_mode` | `none` | `none`, `valid-reuse` ou `farm` |
+| `--token-budget` | `token_budget` | 0 | tokens emitidos no `farm` e teto de chamadas a `/token` (>= 1 em `farm`, <= 1000) |
+| `--token-path` | `token_path` | `/token` | rota de emissão; deve começar com `/` e não conter `@`, `//`, `?` nem `#` |
+| `--keepalive` | — | off | reusar conexão TCP (padrão: uma conexão nova por requisição) |
+| `--pipeline` | — | off | concentra requisições por conexão; implica `--keepalive` |
+| `--partial-timeout` | — | 4s | limiar de falha parcial |
+| `--total-timeout` | — | 60s | limiar de falha total; também é o deadline de cada requisição (`--partial-timeout` <= `--total-timeout`) |
+| `--start-at` | — | 0 | instante Unix em ms do tempo zero comum a atacante e legítimo (no máximo 1 h à frente); `t_start`/`t_end` saem em s desde ele; 0 = o zero é o fim do prefetch de tokens |
+
+- Chave K3: em `valid-reuse` e `farm` o atacante emite tokens conforme o "Contrato do token K3" (deste arquivo, escrito pela tarefa da chave), mandando `?cid=<cid>` em `GET <token_path>` e o header `X-Token` nas requisições a `/api`. O `cid` é determinístico por semente (`atk-<seed>-<i>`, com `i` o índice do token); `valid-reuse` usa `atk-<seed>-0`. Os `N` tokens do `farm` são buscados antes do início do plano (não deslocam o `t_start`), cada um do IP `pool[i % len(pool)]`, e distribuídos pelas requisições por rodízio do índice; `/token` nunca é chamado mais de `N` vezes. A emissão usa `RoundTrip` direto (não segue redirect; status != 200 é erro) e qualquer falha de emissão aborta a corrida com erro e código de saída != 0 — nunca uma requisição sem token. Como o atacante não renova o token (validade 300 s), `--warmup + --duration` fica limitado a 270 s em `valid-reuse` e `farm`; um 429 em `/token` no prefetch aborta com a mensagem `emissão limitada: reduza --token-budget ou aumente E`.
+- `--start-at` é o tempo zero comum de atacante e legítimo: `t_start`/`t_end` saem em s desde esse instante e `0` mantém o zero no fim do prefetch. O runner o define como agora + margem que cobre a execução do processo, `checkSources` e `planFromConfig` além do prefetch de tokens. Se o prefetch não terminar antes dele o atacante aborta com `prefetch de tokens excedeu a janela de --start-at`; se o instante já tiver vencido sem prefetch aborta com `--start-at já passou`; nos dois casos o código de saída é != 0. O valor é Unix em milissegundos e não pode passar de 1 h à frente.
+- Origens: todo IP do pool é pré-checado como local e da família do alvo antes do disparo; erro de bind (`EADDRNOTAVAIL`, `EAFNOSUPPORT`), `EMFILE`/`ENFILE` e saturação do semáforo de requisições em voo (dimensionado a partir de `RLIMIT_NOFILE`, no máximo metade) são erros do próprio gerador: a corrida aborta com código != 0, sem virar registros de falha. Requisições em voo canceladas por `SIGINT`/`SIGTERM` são descartadas (sem registros fantasmas), os concluídos são gravados e a saída é != 0.
+
+## Classificação de desfecho do atacante
+
+Cada requisição que termina vira uma linha com `outcome`, decidido por `classify` em `gen/attacker/send.go`:
+
+| Situação | `outcome` | `status` |
+|---|---|---|
+| erro do gerador (`EADDRNOTAVAIL`, `EAFNOSUPPORT`, `EMFILE`, `ENFILE`) | nenhum: a corrida aborta com erro e código != 0 | — |
+| `ECONNREFUSED`, `ECONNRESET` ou `EPIPE`, qualquer que seja o tempo decorrido | `fail_refused` | 0 |
+| qualquer outro erro (EOF, timeout, reset de stream) com tempo decorrido >= total | `fail_total` | 0 |
+| qualquer outro erro com tempo decorrido >= parcial e < total | `fail_partial` | 0 |
+| qualquer outro erro antes do parcial | `fail_total` | 0 |
+| resposta 401 ou 429, qualquer que seja o tempo decorrido | `fail_refused` | código |
+| resposta concluída antes do parcial | `ok` | código |
+| resposta concluída no parcial e antes do total | `fail_partial` | código |
+| resposta concluída no total ou além | `fail_total` | código |
+
+- `3xx`, `4xx` diferentes de `401`/`429`, `405` e `5xx` contam como `ok` porque a requisição atravessou o limitador e chegou ao alvo: o `405` é só o alvo aceitar apenas `GET`, o `5xx` é o alvo respondendo e um `404` é o alvo não ter a rota; todos medem acesso concedido, não contenção. Só `401`/`429` (negado pelo limitador/chave) e as falhas de conexão/tempo medem contenção.
+- A resposta preserva o `status` mesmo quando o desfecho é `fail_partial` ou `fail_total`; só erro sem resposta zera o `status`.
+- O `outcome` do atacante mede acesso concedido × contido e não é comparável ao do legítimo; o `pft` usa só o do legítimo.
+
 ## Mudança de contrato
 
 Qualquer alteração depois do congelamento é registrada neste arquivo, com data, e todos os consumidores são atualizados no mesmo commit.
@@ -76,3 +157,7 @@ Qualquer alteração depois do congelamento é registrada neste arquivo, com dat
 | Data | Contrato | Mudança | Consumidores atualizados |
 |---|---|---|---|
 | 2026-11-24 | C-NET | Seção acrescentada: endereços do veth (v4 e v6), portas, prefixos de origem e de controle, local do SNAT | nginx (T4), rede (T7), atacante (T8), legítimo (T9) |
+| 2026-11-24 | C-CLI (atacante) | Seção "Formato do pool do atacante" acrescentada: arquivo de `--schedule` com pool e parâmetros de tráfego | atacante (T8) |
+| 2026-11-24 | C-CLI (atacante) | Seções "Flags do atacante" (todas as flags, chave K3, origens) e "Classificação de desfecho do atacante" acrescentadas | atacante (T8) |
+| 2026-11-25 | C-CLI (atacante) | Flag `--start-at` (tempo zero comum), teto de `--token-budget` (1000) e janela de 270 s do token registrados na seção "Flags do atacante"; `--total-timeout` deixa de citar `ResponseHeaderTimeout` (o deadline do ctx cobre) | atacante (T8), legítimo (T9) |
+| 2026-11-25 | C-CLI (atacante) | Tabela "Classificação de desfecho do atacante" alinhada ao `classify` de `send.go`; declarado que o `outcome` do atacante não é comparável ao do legítimo | atacante (T8), legítimo (T9), análise |
