@@ -14,6 +14,16 @@ LOG=${GATE_LOG:-$ROOT/check.tempos.log}
 : > "$LOG"
 FAIL=0
 
+# git: nativo; em worktree criado pelo Windows o .git aponta para um caminho C:/ que o git do
+# WSL não resolve, então cai para git.exe. Sem git funcional o gate falha (guarda nunca fica vazia).
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  g() { git "$@"; }
+elif command -v git.exe >/dev/null 2>&1 && WINROOT=$(wslpath -w "$ROOT") && git.exe -C "$WINROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  g() { git.exe -C "$WINROOT" "$@"; }
+else
+  echo "FAIL git inacessível: nem git nem git.exe enxergam o repositório" | tee -a "$LOG"; exit 1
+fi
+
 step() {
   local name=$1; shift
   local t0=$SECONDS
@@ -22,13 +32,13 @@ step() {
 }
 skip() { echo "SKIP $1 ($2)" | tee -a "$LOG"; }
 
-if [[ $MODE == rapido ]] && ! git rev-parse --verify -q "$BASE" >/dev/null; then
+if [[ $MODE == rapido ]] && ! g rev-parse --verify -q "$BASE" >/dev/null; then
   echo "base '$BASE' não existe; usando modo completo" | tee -a "$LOG"
   MODE=completo
 fi
 
 changed() {
-  { git diff --name-only "$BASE"...HEAD; git diff --name-only HEAD; git ls-files -o --exclude-standard; } 2>/dev/null | sort -u
+  { g diff --name-only "$BASE"...HEAD; g diff --name-only HEAD; g ls-files -o --exclude-standard; } 2>/dev/null | tr -d '\r' | sort -u
 }
 CHANGED=""
 [[ $MODE == rapido ]] && CHANGED=$(changed)
@@ -40,8 +50,9 @@ touched() { # dir -> 0 se o modo é completo ou algo mudou sob dir
 
 # 1. Guarda de segredos: nenhum arquivo rastreado pode ser config de roteador, snapshot ou credencial.
 no_secrets() {
-  local bad
-  bad=$(git ls-files | grep -Ei '\.(cfg|dpapi)$|credenciais|recuperacao|(^|/)\.env$' || true)
+  local files bad
+  files=$(g ls-files) || { echo "git ls-files falhou"; return 1; }
+  bad=$(tr -d '\r' <<<"$files" | grep -Ei '\.(cfg|dpapi)$|credenciais|recuperacao|(^|/)\.env$' || true)
   [[ -z $bad ]] || { echo "arquivos proibidos no git:"; echo "$bad"; return 1; }
 }
 step segredos no_secrets
