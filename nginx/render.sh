@@ -66,7 +66,7 @@ main() {
   mkdir -p "$3"
 
   set -a
-  source "$PARAMS"
+  source <(tr -d '\r' <"$PARAMS")
   RUN_DIR=$(cd "$3" && pwd)
   apply_defaults
   check_always_required

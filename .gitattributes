@@ -5,3 +5,5 @@
 *.js text eol=lf
 *.py text eol=lf
 *.go text eol=lf
+*.env text eol=lf
+sample.params.env text eol=lf
