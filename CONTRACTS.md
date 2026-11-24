@@ -7,12 +7,13 @@ Fonte única de verdade para as tasks seguintes. Mudanças só pela seção "Mud
 TSV com exatamente 8 campos, nesta ordem:
 
 ```
-$msec \t $remote_addr \t $server_name \t $status \t $request_time \t $upstream_response_time \t $limit_req_status \t $sent_http_x_key
+$msec \t $remote_addr \t $server_name \t $status \t $request_time \t $upstream_response_time \t $limit_req_status \t $testbed_key
 ```
 
 - `$server_name` identifica a chave (`k1`/`k2`/`k3`).
-- `$sent_http_x_key` é a chave efetiva calculada (eco via `add_header X-Key`).
+- `$testbed_key` é a chave efetiva calculada, definida por `set` no `location /` de cada template de chave (o eco via header `X-Key` foi removido: bytes binários da chave não cabem em um header HTTP).
 - `$limit_req_status` é `PASSED|DELAYED|REJECTED` (variável do módulo).
+- `$testbed_key` fica vazio em 400 (requisição malformada que não chega a `location /`).
 
 ## C-CLI: geradores
 
@@ -76,3 +77,4 @@ Qualquer alteração depois do congelamento é registrada neste arquivo, com dat
 | Data | Contrato | Mudança | Consumidores atualizados |
 |---|---|---|---|
 | 2026-11-24 | C-NET | Seção acrescentada: endereços do veth (v4 e v6), portas, prefixos de origem e de controle, local do SNAT | nginx (T4), rede (T7), atacante (T8), legítimo (T9) |
+| 2026-11-24 | C-LOG | 8º campo passa de `$sent_http_x_key` para `$testbed_key`, definida por `set` no `location /` de cada template; `add_header X-Key` removido porque bytes binários da chave (0x00, 0x0A) não são válidos em header HTTP | nginx (T5), nginx/test_k1.sh, spike/test_g2_k2.py |

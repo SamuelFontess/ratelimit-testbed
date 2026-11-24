@@ -19,7 +19,7 @@ readonly COL_ADDR=2
 readonly COL_SERVER=3
 readonly COL_STATUS=4
 readonly COL_LIMIT=7
-readonly COL_XKEY=8
+readonly COL_KEY=8
 source "$HERE/../env/lib.sh"
 testbed_add_go_to_path
 
@@ -73,16 +73,16 @@ check_log_shape() {
   local log=$1 key=$2 total bad
   total=$(wc -l <"$log")
   [[ $total -eq $TOTAL_REQUESTS ]] || fail "$log: esperava $TOTAL_REQUESTS linhas, achou $total"
-  bad=$(awk -F'\t' -v n=$LOG_FIELDS -v m=$COL_MSEC -v a=$COL_ADDR -v s=$COL_SERVER -v x=$COL_XKEY -v key="$key" \
+  bad=$(awk -F'\t' -v n=$LOG_FIELDS -v m=$COL_MSEC -v a=$COL_ADDR -v s=$COL_SERVER -v x=$COL_KEY -v key="$key" \
     'NF != n || $m !~ /^[0-9]+\.[0-9][0-9][0-9]$/ || $s != key || $x == "" || $x != $a' "$log")
-  [[ -z $bad ]] || fail "$log: linha fora do C-LOG (8 campos, \$msec, server_name=$key, X-Key=\$remote_addr): $(head -n1 <<<"$bad")"
+  [[ -z $bad ]] || fail "$log: linha fora do C-LOG (8 campos, \$msec, server_name=$key, chave=\$remote_addr): $(head -n1 <<<"$bad")"
 }
 
 check_other_origin() {
   local log=$1 key=$2 ok
-  ok=$(tail -n1 "$log" | awk -F'\t' -v s=$COL_STATUS -v a=$COL_ADDR -v x=$COL_XKEY -v alt=$OTHER_HOST \
+  ok=$(tail -n1 "$log" | awk -F'\t' -v s=$COL_STATUS -v a=$COL_ADDR -v x=$COL_KEY -v alt=$OTHER_HOST \
     '$s == 200 && $a == alt && $x == alt' | wc -l)
-  [[ $ok -eq 1 ]] || fail "$key: origem $OTHER_HOST não teve 200 com remote_addr e X-Key próprios: $(tail -n1 "$log")"
+  [[ $ok -eq 1 ]] || fail "$key: origem $OTHER_HOST não teve 200 com remote_addr e chave próprios: $(tail -n1 "$log")"
 }
 
 check_k1() {

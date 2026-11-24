@@ -14,7 +14,7 @@ http {
     uwsgi_temp_path ${RUN_DIR}/uwsgi_temp;
     scgi_temp_path ${RUN_DIR}/scgi_temp;
 
-    log_format testbed '$msec\t$remote_addr\t$server_name\t$status\t$request_time\t$upstream_response_time\t$limit_req_status\t$sent_http_x_key';
+    log_format testbed '$msec\t$remote_addr\t$server_name\t$status\t$request_time\t$upstream_response_time\t$limit_req_status\t$testbed_key';
     access_log ${RUN_DIR}/nginx.access.log testbed;
 
     limit_req_status 429;
