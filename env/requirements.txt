@@ -1,0 +1,5 @@
+numpy>=2.3
+scipy>=1.16
+matplotlib>=3.10
+hypothesis>=6.100
+pytest>=8
