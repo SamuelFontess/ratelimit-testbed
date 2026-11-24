@@ -1,0 +1,13 @@
+server {
+    server_name none;
+    listen ${LISTEN_HOST}:${PORT};
+    ${LISTEN6_LINE}
+    ${LAN_LISTEN_LINE}
+
+    location / {
+        add_header X-Key $remote_addr always;
+        proxy_pass http://${UPSTREAM_NAME};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
