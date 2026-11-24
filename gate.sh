@@ -92,6 +92,10 @@ else
   skip pytest "sem testes"
 fi
 
+if [[ -f spike/g4_schedule.sh ]]; then
+  if touched gen/legit || touched spike; then step g4-agenda bash spike/g4_schedule.sh; else skip g4-agenda "sem alteração"; fi
+fi
+
 # 5. Nginx: config renderizada de cada chave precisa passar em nginx -t (entregue pela task do Nginx).
 if [[ -f nginx/check.sh ]]; then step nginx-config bash nginx/check.sh; else skip nginx-config "nginx/check.sh ainda não existe"; fi
 
