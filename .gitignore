@@ -1,0 +1,19 @@
+runs/
+results/
+*.log
+*.jsonl
+.venv/
+__pycache__/
+.pytest_cache/
+check.tempos.log
+# segredos e backups de roteador: nunca no git (Req 13.4)
+*.cfg
+*.dpapi
+*credenciais*
+*recuperacao*
+.env
+*.env.local
+# binários dos geradores
+/gen/attacker/attacker
+/gen/legit/legit
+/target/target
