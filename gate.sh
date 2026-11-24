@@ -6,6 +6,9 @@
 # componente aparece como SKIP e nunca esconde falha de componente existente.
 set -uo pipefail
 
+# Go fica em /usr/local/go/bin, fora do PATH de shell não interativo.
+[[ -d /usr/local/go/bin ]] && PATH=$PATH:/usr/local/go/bin
+
 MODE=${1:-rapido}
 BASE=${GATE_BASE:-main}
 cd "$(dirname "$0")"
@@ -72,7 +75,7 @@ step shell-sintaxe sh_syntax
 # 3. Go: vet e test em cada módulo.
 while IFS= read -r mod; do
   d=$(dirname "$mod")
-  if touched "$d"; then step "go:$d" bash -c "cd '$d' && go vet ./... && go test ./..."
+  if touched "$d"; then step "go:$d" bash -c "cd '$d' && go vet ./... && go test -count=1 ./..."
   else skip "go:$d" "sem alteração"; fi
 done < <(find . -name go.mod -not -path './.venv/*')
 
@@ -90,11 +93,11 @@ else
 fi
 
 # 5. Nginx: config renderizada de cada chave precisa passar em nginx -t (entregue pela task do Nginx).
-if [[ -x nginx/check.sh ]]; then step nginx-config nginx/check.sh; else skip nginx-config "nginx/check.sh ainda não existe"; fi
+if [[ -f nginx/check.sh ]]; then step nginx-config bash nginx/check.sh; else skip nginx-config "nginx/check.sh ainda não existe"; fi
 
 # 6. Completo: ambiente.
 if [[ $MODE == completo ]]; then
-  if [[ -x env/check_env.sh ]]; then step ambiente env/check_env.sh; else skip ambiente "env/check_env.sh ainda não existe"; fi
+  if [[ -f env/check_env.sh ]]; then step ambiente bash env/check_env.sh; else skip ambiente "env/check_env.sh ainda não existe"; fi
 fi
 
 echo "gate $MODE: $([[ $FAIL -eq 0 ]] && echo VERDE || echo VERMELHO)" | tee -a "$LOG"
