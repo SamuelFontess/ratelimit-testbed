@@ -2,12 +2,14 @@
 set -euo pipefail
 
 readonly HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+readonly NGINX=${NGINX:-nginx}
 readonly ALWAYS_REQUIRED=(PORT QUEUE_MODE)
 readonly SUBST_VARS=(
   WORKERS WORKER_CONNECTIONS RUN_DIR
   UPSTREAM_NAME UPSTREAM_ADDR UPSTREAM_KEEPALIVE
   LISTEN_HOST LISTEN6_LINE LAN_LISTEN_LINE PORT
   ZONE_SIZE R BURST QUEUE_FLAG
+  E RCLI EMIT_KEY_VAR
 )
 
 fail() { echo "render.sh: $*" >&2; exit 1; }
@@ -21,6 +23,7 @@ apply_defaults() {
   : "${ZONE_SIZE:=16m}"
   : "${WORKERS:=1}"
   : "${WORKER_CONNECTIONS:=4096}"
+  : "${EMIT_KEY:=prefix}"
 }
 
 check_always_required() {
@@ -28,6 +31,14 @@ check_always_required() {
   for var in "${ALWAYS_REQUIRED[@]}"; do
     [[ -n ${!var-} ]] || fail "variável obrigatória ausente em $PARAMS: $var"
   done
+}
+
+njs_main_lines() {
+  local modules_path module
+  modules_path=$("$NGINX" -V 2>&1 | tr ' ' '\n' | sed -n 's|^--modules-path=||p')
+  module=$modules_path/ngx_http_js_module.so
+  [[ -n $modules_path && -f $module ]] || fail "módulo njs não encontrado em '$modules_path'"
+  printf 'load_module %s;\nenv TOKEN_SECRET;\n' "$module"
 }
 
 derive_lines() {
@@ -43,6 +54,11 @@ derive_lines() {
     delay) QUEUE_FLAG= ;;
     *) fail "QUEUE_MODE deve ser nodelay ou delay, recebido '$QUEUE_MODE'" ;;
   esac
+  case $EMIT_KEY in
+    prefix) EMIT_KEY_VAR='$k2key_safe' ;;
+    addr) EMIT_KEY_VAR='$remote_addr' ;;
+    *) fail "EMIT_KEY deve ser prefix ou addr, recebido '$EMIT_KEY'" ;;
+  esac
 }
 
 check_template_vars() {
@@ -57,9 +73,15 @@ render() {
   envsubst "$(printf '${%s} ' "${SUBST_VARS[@]}")" <"$1" >"$2"
 }
 
+copy_support_files() {
+  if [[ $KEY == k2 || $KEY == k3 ]]; then cp "$HERE/maps/k2_prefix.conf" "$RUN_DIR/k2_prefix.conf"; fi
+  if [[ $KEY == k3 ]]; then cp "$HERE/token/token.js" "$RUN_DIR/token.js"; fi
+}
+
 main() {
   [[ $# -eq 3 ]] || fail "uso: render.sh <chave> <params.env> <out_dir>"
-  local key_tmpl=$HERE/keys/$1.conf.tmpl
+  KEY=$1
+  local key_tmpl=$HERE/keys/$KEY.conf.tmpl
   PARAMS=$2
   [[ -f $key_tmpl ]] || fail "chave '$1' sem template em $HERE/keys"
   [[ -f $PARAMS ]] || fail "params.env não existe: $PARAMS"
@@ -75,7 +97,11 @@ main() {
   set +a
 
   render "$HERE/nginx.conf.tmpl" "$RUN_DIR/nginx.conf"
+  if [[ $KEY == k3 ]]; then
+    { njs_main_lines; cat "$RUN_DIR/nginx.conf"; } >"$RUN_DIR/nginx.conf.k3" && mv "$RUN_DIR/nginx.conf.k3" "$RUN_DIR/nginx.conf"
+  fi
   render "$key_tmpl" "$RUN_DIR/run.key.conf"
+  copy_support_files
 }
 
 main "$@"

@@ -14,6 +14,7 @@ import pytest
 from hypothesis import assume, given, settings, strategies as st
 
 RAIZ = Path(__file__).resolve().parents[1]
+MAPAS_K2 = RAIZ / "nginx" / "maps" / "k2_prefix.conf"
 PORTA = 18099
 PORTA_REALIP = 18098
 LOG_FIELDS = 8
@@ -199,14 +200,14 @@ def test_ipv6_realip_borda(nginx_k2_realip, endereco):
 
 
 def test_ramos_regex_com_dotall():
-    ramos = [l.strip() for l in (RAIZ / "nginx" / "keys" / "k2.conf.tmpl").read_text().splitlines() if l.strip().startswith("~")]
+    ramos = [l.strip() for l in MAPAS_K2.read_text().splitlines() if l.strip().startswith("~")]
     assert len(ramos) == 3
     for ramo in ramos:
         assert ramo.startswith("~(?s)")
 
 
 def test_defaults_nao_vazios():
-    linhas = [l.strip() for l in (RAIZ / "nginx" / "keys" / "k2.conf.tmpl").read_text().splitlines() if l.strip().startswith("default ")]
+    linhas = [l.strip() for l in MAPAS_K2.read_text().splitlines() if l.strip().startswith("default ")]
     assert linhas
     for linha in linhas:
         valor = linha.split(None, 1)[1].rstrip(";").strip()
