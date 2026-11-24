@@ -76,12 +76,14 @@ while IFS= read -r mod; do
   else skip "go:$d" "sem alteração"; fi
 done < <(find . -name go.mod -not -path './.venv/*')
 
-# 4. Python: se há testes, o venv é obrigatório.
+# 4. Python: se há testes, o venv é obrigatório. Fica fora do repo e é compartilhado entre
+#    worktrees: $TESTBED_VENV, padrão ~/.venvs/testbed (criado por env/setup.sh).
+VENV=${TESTBED_VENV:-$HOME/.venvs/testbed}
 if find . \( -name '*_test.py' -o -name 'test_*.py' \) -not -path './.venv/*' | grep -q .; then
-  if [[ -x .venv/bin/python ]]; then
-    step pytest .venv/bin/python -m pytest -q -p no:cacheprovider
+  if [[ -x $VENV/bin/python ]]; then
+    step pytest "$VENV/bin/python" -m pytest -q -p no:cacheprovider
   else
-    echo "FAIL pytest (testes existem, mas .venv ausente: rode env/setup.sh)" | tee -a "$LOG"; FAIL=1
+    echo "FAIL pytest (testes existem, mas o venv $VENV não existe: rode env/setup.sh)" | tee -a "$LOG"; FAIL=1
   fi
 else
   skip pytest "sem testes"
