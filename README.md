@@ -48,7 +48,7 @@ flowchart LR
   R -. orquestra .-> N
 ```
 
-O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado das zonas sobrevive a `reload`). Tudo roda no WSL2, com tráfego benigno gerado pelo grupo contra a API do grupo.
+O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado das zonas sobrevive a `reload`). A matriz roda na VM Ubuntu 24.04 arm64; o WSL2 serve para desenvolvimento, e tráfego benigno é gerado pelo grupo contra a API do grupo.
 
 ### Estrutura
 
@@ -79,10 +79,10 @@ O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado 
 
 ## Como rodar
 
-Requisitos: Ubuntu no WSL2 (ou Linux) com `sudo`, Go 1.22+, Python 3 e Nginx 1.28 com o módulo njs.
+Requisitos: Ubuntu 22.04, 24.04 ou 26.04 (x86_64 ou arm64) com `sudo` sem senha. O ambiente oficial da matriz é a VM Ubuntu 24.04 arm64 (`oracle-a1`); o WSL2 fica só para desenvolvimento. `env/setup.sh` provisiona os dois: pacotes base, Nginx 1.28 com njs (da distro quando ela já traz a versão, senão do repositório nginx.org), Go, venv e verificação.
 
 ```bash
-bash env/setup.sh        # pacotes (nftables, conntrack, jq, njs, venv) e verificação
+bash env/setup.sh        # pacotes, Nginx 1.28+njs, Go, venv e verificação
 bash env/check_env.sh    # confere binários, njs, venv e criação de netns
 bash gate.sh rapido      # testes só do que mudou contra a main
 bash gate.sh completo    # tudo: Go, pytest, G4 da agenda, nginx -t de cada chave, ambiente
