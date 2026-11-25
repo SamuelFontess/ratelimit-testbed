@@ -4,7 +4,7 @@ Testbed reproduzível para medir o **compromisso entre contenção de HTTP flood
 
 Projeto da disciplina IMD0703 (UFRN), Unidade III. O artigo propõe a comparação; este repositório é o experimento que a executa.
 
-> **Estado em 25/11/2026:** infraestrutura de medição pronta e testada (10 de 15 tarefas); **nenhuma corrida da matriz foi executada ainda**. Faltam o consolidador do pft, o runner, o spike de validação, a calibração e as saídas para o artigo. Este README não apresenta resultado nenhum.
+> **Estado em 25/11/2026:** infraestrutura de medição pronta e testada (11 de 15 tarefas); **nenhuma corrida da matriz foi executada ainda**. Faltam o runner, o spike de validação, a calibração e as saídas para o artigo. Este README não apresenta resultado nenhum.
 
 ## A pergunta
 
@@ -48,7 +48,7 @@ flowchart LR
   R -. orquestra .-> N
 ```
 
-O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado das zonas sobrevive a `reload`). Tudo roda no WSL2, com tráfego benigno gerado pelo grupo contra a API do grupo.
+O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado das zonas sobrevive a `reload`). A matriz roda na VM Ubuntu 24.04 arm64; o WSL2 serve para desenvolvimento, e tráfego benigno é gerado pelo grupo contra a API do grupo.
 
 ### Estrutura
 
@@ -58,7 +58,7 @@ O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado 
 | `nginx/` | config por chave, `render.sh` (uma chave por corrida), njs do token K3, testes | pronto |
 | `gen/attacker/` | gerador de carga com IP de origem por requisição, formas de onda, modos de token | pronto |
 | `gen/legit/` | agenda de chegadas por seed e cliente open-loop | pronto |
-| `analysis/` | IC pareado (t de Student), significância, fronteira de Pareto | parcial: falta o pft |
+| `analysis/` | consolidação: pft (total, por grupo, limiares de 1 s e 2 s), contenção, goodput, p95/p99 e `late_events` em `results.csv`; IC pareado (t de Student), significância, fronteira de Pareto | parcial: faltam as figuras e tabelas para o artigo |
 | `spike/` | gates G1 (SNAT), G2 (K2), G3 (K3), G4 (agenda) e G5 (origem por requisição); G6 a G10 pendentes | parcial |
 | `net/` | namespace `gen` com veth, rotas e SNAT do S1 (`netns-setup.sh`, `netns-teardown.sh`), regra do firewall do Windows e testes | pronto |
 | `runner/` | execução retomável da matriz | pendente |
@@ -75,19 +75,26 @@ O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado 
 - **Token K3:** `base64url(cid).base64url(exp).base64url(HMAC-SHA256)`, validade de 300 s. Emissão em `GET /token?cid=<cid>`, uso no header `X-Token`. Sem token, token adulterado ou expirado dá 401 **antes** de qualquer `limit_req`. O segredo vem de `TOKEN_SECRET`, nunca de arquivo versionado.
 - **Rede sintética (C-NET):** veth `10.77.255.0/30`, prefixos do atacante `10.66.0.0/16` e `fd12:3456:789a::/48`, prefixos de controle `10.67.0.0/16` e `fd12:3456:789b::/48`, SNAT só no S1.
 - **Classificação de desfecho:** o `outcome` do atacante mede acesso concedido × contido; o do legítimo alimenta o pft. Não são comparáveis entre si.
+- **Métricas do consolidador:** a janela do ataque é `[warmup, warmup + duration)`; o pft casa C1 e Cx por (`cid`, ordem) e conta só transações sobrepostas à janela; contenção, goodput, p95/p99 e `late_events` têm a definição em `CONTRACTS.md`. Sem o C1 pareado, a linha sai com `computable = false` e o pft vazio.
 
 ## Como rodar
 
-Requisitos: Ubuntu no WSL2 (ou Linux) com `sudo`, Go 1.22+, Python 3 e Nginx 1.28 com o módulo njs.
+Requisitos: Ubuntu 22.04, 24.04 ou 26.04 (x86_64 ou arm64) com `sudo` sem senha. O ambiente oficial da matriz é a VM Ubuntu 24.04 arm64 (`oracle-a1`); o WSL2 fica só para desenvolvimento. `env/setup.sh` provisiona os dois: pacotes base, Nginx 1.28 com njs (da distro quando ela já traz a versão, senão do repositório nginx.org), Go, venv e verificação.
 
 ```bash
-bash env/setup.sh        # pacotes (nftables, conntrack, jq, njs, venv) e verificação
+bash env/setup.sh        # pacotes, Nginx 1.28+njs, Go, venv e verificação
 bash env/check_env.sh    # confere binários, njs, venv e criação de netns
 bash gate.sh rapido      # testes só do que mudou contra a main
 bash gate.sh completo    # tudo: Go, pytest, testes de rede, G1, G5, G4, nginx -t, ambiente
 ```
 
-O gate rápido roda: varredura de segredos, sintaxe de shell, `go vet` e `go test` de `target/`, `gen/attacker/` e `gen/legit/`, `pytest` (K2, K3, token, agenda, estatística), o gate G4 e `nginx -t` de cada chave renderizada. Os testes com Nginx usam portas fixas (18080, 18081, 18090, 18091, 18099): rode uma suíte por vez.
+Consolidar as corridas já executadas em `results/results.csv` (uma linha por corrida `done`; sem o C1 pareado a linha sai com `computable = false` e o pft vazio):
+
+```bash
+python analysis/consolidate.py runs/
+```
+
+O gate rápido roda: varredura de segredos, sintaxe de shell, `go vet` e `go test` de `target/`, `gen/attacker/` e `gen/legit/`, `pytest` (K2, K3, token, agenda, estatística, consolidação), o gate G4 e `nginx -t` de cada chave renderizada. Os testes com Nginx usam portas fixas (18080, 18081, 18090, 18091, 18099): rode uma suíte por vez.
 
 ### Rede sintética
 
