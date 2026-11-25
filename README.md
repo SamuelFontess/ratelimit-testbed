@@ -4,7 +4,7 @@ Testbed reproduzível para medir o **compromisso entre contenção de HTTP flood
 
 Projeto da disciplina IMD0703 (UFRN), Unidade III. O artigo propõe a comparação; este repositório é o experimento que a executa.
 
-> **Estado em 25/11/2026:** infraestrutura de medição pronta e testada (9 de 15 tarefas); **nenhuma corrida da matriz foi executada ainda**. Faltam a rede sintética, o consolidador do pft, o runner, o spike de validação, a calibração e as saídas para o artigo. Este README não apresenta resultado nenhum.
+> **Estado em 25/11/2026:** infraestrutura de medição pronta e testada (10 de 15 tarefas); **nenhuma corrida da matriz foi executada ainda**. Faltam o consolidador do pft, o runner, o spike de validação, a calibração e as saídas para o artigo. Este README não apresenta resultado nenhum.
 
 ## A pergunta
 
@@ -59,8 +59,8 @@ O Nginx roda **uma chave por corrida** e é reiniciado a cada corrida (o estado 
 | `gen/attacker/` | gerador de carga com IP de origem por requisição, formas de onda, modos de token | pronto |
 | `gen/legit/` | agenda de chegadas por seed e cliente open-loop | pronto |
 | `analysis/` | IC pareado (t de Student), significância, fronteira de Pareto | parcial: falta o pft |
-| `spike/` | gates G2 (K2), G3 (K3) e G4 (agenda); G1 e G5 a G10 pendentes | parcial |
-| `net/` | netns, veth, SNAT e firewall da rede sintética | pendente |
+| `spike/` | gates G1 (SNAT), G2 (K2), G3 (K3), G4 (agenda) e G5 (origem por requisição); G6 a G10 pendentes | parcial |
+| `net/` | namespace `gen` com veth, rotas e SNAT do S1 (`netns-setup.sh`, `netns-teardown.sh`), regra do firewall do Windows e testes | pronto |
 | `runner/` | execução retomável da matriz | pendente |
 | `env/` | instalação e verificação do ambiente | pronto |
 | `CONTRACTS.md` | contratos congelados entre as peças | pronto |
@@ -84,10 +84,21 @@ Requisitos: Ubuntu no WSL2 (ou Linux) com `sudo`, Go 1.22+, Python 3 e Nginx 1.2
 bash env/setup.sh        # pacotes (nftables, conntrack, jq, njs, venv) e verificação
 bash env/check_env.sh    # confere binários, njs, venv e criação de netns
 bash gate.sh rapido      # testes só do que mudou contra a main
-bash gate.sh completo    # tudo: Go, pytest, G4 da agenda, nginx -t de cada chave, ambiente
+bash gate.sh completo    # tudo: Go, pytest, testes de rede, G1, G5, G4, nginx -t, ambiente
 ```
 
-O gate roda: varredura de segredos, sintaxe de shell, `go vet` e `go test` de `target/`, `gen/attacker/` e `gen/legit/`, `pytest` (K2, K3, token, agenda, estatística), o gate G4 e `nginx -t` de cada chave renderizada. Os testes de Nginx usam portas fixas (18080, 18081, 18099): rode uma suíte por vez.
+O gate rápido roda: varredura de segredos, sintaxe de shell, `go vet` e `go test` de `target/`, `gen/attacker/` e `gen/legit/`, `pytest` (K2, K3, token, agenda, estatística), o gate G4 e `nginx -t` de cada chave renderizada. Os testes com Nginx usam portas fixas (18080, 18081, 18090, 18091, 18099): rode uma suíte por vez.
+
+### Rede sintética
+
+```bash
+sudo -n bash net/netns-setup.sh s1      # gen + veth + rotas; s1 acrescenta o SNAT (s2a e s3 ficam sem)
+sudo -n bash net/netns-teardown.sh      # remove tudo; código 0 quando nada existe
+```
+
+Os gates de rede rodam como usuário comum (eles chamam `sudo -n`) e sobem alvo, Nginx e atacante sozinhos: `spike/g1_snat.sh` (padrão de 2.000 conexões/s por 60 s em S1; `G1_RATE` explícito vence, senão vale o `ATTACK_RATE` de `calibration.env`, e `G1_DURATION` ajusta a janela) e `spike/g5_freebind.sh` (mil origens IPv4 e mil IPv6 distintas no `access.log`). Eles usam as portas 18090 e 18091. `net/fw-windows.ps1` abre a entrada TCP 8081 a 8083 no firewall do Windows; precisa de uma sessão de administrador.
+
+O tráfego de `gen` entra no namespace raiz pela `veth-h`. Quando a cadeia `INPUT` fecha o resto (imagem de nuvem com a cadeia `INPUT` terminada em `REJECT`/`DROP` ou com política `DROP`), o setup insere `iptables -I INPUT 1 -i veth-h -m comment --comment testbed-veth-h -j ACCEPT` — e o equivalente em `ip6tables` sob o mesmo critério —, e o teardown remove só essa regra: é a única alteração que os scripts de `net/` fazem nas tabelas do sistema.
 
 Renderizar a configuração de uma corrida:
 
@@ -120,6 +131,7 @@ Todo defeito vira uma regra de processo: contratos congelados primeiro, uma chav
 - O gerador não reproduz TLS/JA4, CGNAT real, custo por GB, IPv6 residencial nem Rapid Reset.
 - Testbed isolado: o resultado compara chaves, não estima o número da internet real.
 - No WSL2, a faixa de portas efêmeras é estreita (44620 a 48715) e quebra o loopback se for ampliada. Testes com bind por requisição exaurem `TIME_WAIT` se houver outros projetos no mesmo WSL.
+- G1 não passa no WSL2, com o limiar intacto (padrão de 2.000 conexões/s por 60 s, mínimo 95%). No WSL2 o gate passa a 100 conexões/s (95,7 medidas em 60 s) e desaba a 200 (15,4 medidas); a 8.000 o atacante morre antes de entregar resultado. Na VM de 2 OCPU passa a 2.000 (1999,6 medidas, CPU do sistema em 59%). A Matriz_Nucleo depende de G1 em PASS: o padrão de 2.000/s é o teto comprovado na VM.
 
 ## Uso responsável
 
