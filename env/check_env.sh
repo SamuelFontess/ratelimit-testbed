@@ -5,8 +5,6 @@ ENV_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$ENV_DIR/lib.sh"
 testbed_add_go_to_path
 
-MIN_NGINX=1.28
-MIN_GO=1.22
 NETNS_PROBE=_chk_$$
 BINARIES=(ip nft conntrack envsubst curl jq go python3)
 PY_IMPORTS="import numpy, scipy, matplotlib, hypothesis, pytest, pandas, jinja2"
@@ -30,25 +28,12 @@ report() {
   fi
 }
 
-version_at_least() {
-  local have=$1 want=$2
-  [[ -n $have && $(printf '%s\n%s\n' "$want" "$have" | sort -V | head -n1) == "$want" ]]
-}
-
-nginx_version() {
-  nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9][0-9.]*\).*|\1|p'
-}
-
-go_version() {
-  go version | sed -n 's|.* go\([0-9][0-9.]*\).*|\1|p'
-}
-
 nginx_recent() { version_at_least "$(nginx_version)" "$MIN_NGINX"; }
 go_recent() { version_at_least "$(go_version)" "$MIN_GO"; }
 
 njs_loadable() {
   local modules_path module conf
-  modules_path=$(nginx -V 2>&1 | tr ' ' '\n' | sed -n 's|^--modules-path=||p')
+  modules_path=$(nginx_modules_path)
   module=$modules_path/ngx_http_js_module.so
   [[ -n $modules_path && -f $module ]] || return 1
   conf=$WORK_DIR/njs.conf
