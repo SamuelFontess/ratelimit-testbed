@@ -7,12 +7,14 @@ Fonte única de verdade para as tasks seguintes. Mudanças só pela seção "Mud
 TSV com exatamente 8 campos, nesta ordem:
 
 ```
-$msec \t $remote_addr \t $server_name \t $status \t $request_time \t $upstream_response_time \t $limit_req_status \t $sent_http_x_key
+$msec \t $remote_addr \t $server_name \t $status \t $request_time \t $upstream_response_time \t $limit_req_status \t $testbed_key
 ```
 
 - `$server_name` identifica a chave (`k1`/`k2`/`k3`).
-- `$sent_http_x_key` é a chave efetiva calculada (eco via `add_header X-Key`).
+- `$testbed_key` é a chave efetiva calculada, definida por `set` no `location /` de cada template de chave (o eco via header `X-Key` foi removido: bytes binários da chave não cabem em um header HTTP).
 - `$limit_req_status` é `PASSED|DELAYED|REJECTED` (variável do módulo).
+- `$testbed_key` fica vazio em 400 (requisição malformada que não chega a `location /`) e em 401 do K3 (sem chave efetiva: o token não identifica cliente).
+- No K3, `$testbed_key` é o `cid` em `/api` (aceita ou rejeitada pelos limites) e a chave de emissão (prefixo K2 ou `$remote_addr`, conforme `EMIT_KEY`) em `/token`.
 
 ## C-CLI: geradores
 
@@ -23,9 +25,12 @@ Flags idênticas em atacante e legítimo:
 --rate <reqps>            # atacante: taxa agregada; legítimo: ignorado (usa agenda)
 --schedule <path>         # legítimo: agenda pré-computada; atacante: pool de IPs/params
 --out <path.jsonl>        # uma linha JSON por transação: {t_start,t_end,status,outcome}
+--start-at <unix_ms>      # instante absoluto do tempo zero; 0 = o gerador define o zero ao terminar o prefetch de tokens
 ```
 
 - `outcome ∈ {ok, fail_partial, fail_total, fail_refused}`.
+- `--start-at` é o tempo zero comum de atacante e legítimo: `t_start`/`t_end` são segundos desde esse instante. O runner o define como agora + margem que cobre o prefetch de tokens (K3). Se o prefetch não terminar antes dele, o atacante aborta com exit != 0; o legítimo segue com os clientes sem token (401 conta falha) e o atraso aparece em `late_ms`.
+- O `outcome` do atacante mede acesso concedido × contido e não é comparável ao do legítimo; o pft usa só o do legítimo.
 - Saída determinística dada a seed.
 
 ## C-NAME: diretório de uma corrida
@@ -68,6 +73,15 @@ Flags idênticas em atacante e legítimo:
 - Prefixos de origem, com rota local e `IP_FREEBIND` em `gen`: atacante e legítimos sob ataque `10.66.0.0/16` e `fd12:3456:789a::/48`; Grupo_Controle `10.67.0.0/16` e `fd12:3456:789b::/48`, nunca usados pelo atacante.
 - Em S1, o SNAT acontece no `postrouting` do namespace `gen` (saída por `veth-g`) e reescreve só `10.66.0.0/16` para `10.77.255.2`; `10.67.0.0/16` não sofre SNAT. Tabela `nft` dedicada `testbed_nat`, nunca as tabelas do sistema (`ip nat` já existe e pertence a outro serviço).
 - Nenhum prefixo da rede sintética pode sobrepor `10.0.0.0/24` (LAN real), `100.64.0.0/10` (Tailscale), `26.0.0.0/8` (Radmin) ou `192.168.56.0/24` (VirtualBox).
+
+## Contrato do token K3
+
+- Formato: `base64url(cid).base64url(exp).base64url(HMAC-SHA256(secret, base64url(cid) + "." + base64url(exp)))`, sem preenchimento `=`; `exp` é o texto decimal (ASCII) da época em segundos, igual à emissão + 300.
+- Emissão: `GET /token?cid=<cid>` com `cid` casando `[A-Za-z0-9_-]{1,64}`; ausente ou inválido responde 400; válido responde 200 com o token como corpo `text/plain`, sem quebra de linha. É um content handler njs (`js_content`) sob `limit_req` de zona própria: chave = prefixo (K2) por padrão ou endereço quando `EMIT_KEY=addr`, taxa `${E}`, burst `${BURST}`.
+- Uso: cabeçalho `X-Token: <token>` em `/api`. Ausente, de estrutura inválida, com HMAC inválido ou expirado responde 401 antes de qualquer `limit_req` (nunca `auth_request`).
+- O segredo vem da variável de ambiente `TOKEN_SECRET` do Runner (diretiva `env TOKEN_SECRET;` no contexto main); nunca em arquivo versionado. Sem segredo, `/token` responde 500 e `/api` responde 401, e o njs registra o erro no `error.log`.
+- Ordem dos limites em `/api`: teto por prefixo (`$k2key_safe`, `${R}`, `${BURST}`, idênticos aos do K2), depois por cliente (`cid`, `${RCLI}`, `${BURST}`). Os maps do prefixo vêm do mesmo arquivo `nginx/maps/k2_prefix.conf` no K2 e no K3.
+- Um 401 não passa por nenhuma zona, e uma recusa 429 de uma zona não consome a cota da outra: teto por prefixo e limite por cliente não se acumulam (medido no nginx 1.28.3).
 
 ## Formato do pool do atacante
 
@@ -157,6 +171,8 @@ Qualquer alteração depois do congelamento é registrada neste arquivo, com dat
 | Data | Contrato | Mudança | Consumidores atualizados |
 |---|---|---|---|
 | 2026-11-24 | C-NET | Seção acrescentada: endereços do veth (v4 e v6), portas, prefixos de origem e de controle, local do SNAT | nginx (T4), rede (T7), atacante (T8), legítimo (T9) |
+| 2026-11-24 | C-LOG | 8º campo passa de `$sent_http_x_key` para `$testbed_key`, definida por `set` no `location /` de cada template; `add_header X-Key` removido porque bytes binários da chave (0x00, 0x0A) não são válidos em header HTTP | nginx (T5), nginx/test_k1.sh, spike/test_g2_k2.py |
+| 2026-11-24 | Token K3 | Seção acrescentada: formato do token, emissão `/token`, cabeçalho `X-Token`, segredo em `TOKEN_SECRET`; C-LOG ganha a chave do K3 (`cid`; vazia em 401) e params `E`, `RCLI`, `EMIT_KEY` | nginx (T6), atacante (T8), legítimo (T9) |
 | 2026-11-24 | C-CLI (atacante) | Seção "Formato do pool do atacante" acrescentada: arquivo de `--schedule` com pool e parâmetros de tráfego | atacante (T8) |
 | 2026-11-24 | C-CLI (atacante) | Seções "Flags do atacante" (todas as flags, chave K3, origens) e "Classificação de desfecho do atacante" acrescentadas | atacante (T8) |
 | 2026-11-25 | C-CLI (atacante) | Flag `--start-at` (tempo zero comum), teto de `--token-budget` (1000) e janela de 270 s do token registrados na seção "Flags do atacante"; `--total-timeout` deixa de citar `ResponseHeaderTimeout` (o deadline do ctx cobre) | atacante (T8), legítimo (T9) |

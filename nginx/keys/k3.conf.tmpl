@@ -1,0 +1,33 @@
+include ${RUN_DIR}/k2_prefix.conf;
+
+js_import token from ${RUN_DIR}/token.js;
+js_set $cid token.clientKey;
+
+limit_req_zone ${EMIT_KEY_VAR} zone=k3_emit:${ZONE_SIZE} rate=${E}r/s;
+limit_req_zone $k2key_safe zone=k3_ceiling:${ZONE_SIZE} rate=${R}r/s;
+limit_req_zone $cid zone=k3_client:${ZONE_SIZE} rate=${RCLI}r/s;
+
+server {
+    server_name k3;
+    listen ${LISTEN_HOST}:${PORT};
+    ${LISTEN6_LINE}
+    ${LAN_LISTEN_LINE}
+
+    location = /token {
+        set $testbed_key ${EMIT_KEY_VAR};
+        limit_req zone=k3_emit burst=${BURST} ${QUEUE_FLAG};
+        js_content token.issue;
+    }
+
+    location / {
+        set $testbed_key $cid;
+        if ($cid = "") {
+            return 401;
+        }
+        limit_req zone=k3_ceiling burst=${BURST} ${QUEUE_FLAG};
+        limit_req zone=k3_client burst=${BURST} ${QUEUE_FLAG};
+        proxy_pass http://${UPSTREAM_NAME};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
