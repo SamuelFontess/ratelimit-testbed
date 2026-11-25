@@ -3,3 +3,5 @@ scipy>=1.16
 matplotlib>=3.10
 hypothesis>=6.100
 pytest>=8
+pandas>=2.3
+jinja2>=3.1

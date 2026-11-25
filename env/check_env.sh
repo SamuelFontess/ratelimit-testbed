@@ -9,7 +9,7 @@ MIN_NGINX=1.28
 MIN_GO=1.22
 NETNS_PROBE=_chk_$$
 BINARIES=(ip nft conntrack envsubst curl jq go python3)
-PY_IMPORTS="import numpy, scipy, matplotlib, hypothesis, pytest"
+PY_IMPORTS="import numpy, scipy, matplotlib, hypothesis, pytest, pandas, jinja2"
 
 FAILED=0
 WORK_DIR=$(mktemp -d)
