@@ -56,13 +56,32 @@ Flags idênticas em atacante e legítimo:
 | `group` | enum | `same_ip`, `same_prefix`, `control` (só no legítimo) |
 | `t_plan`, `late_ms` | float | só no legítimo |
 
-**`meta.json`**: `{scenario, key, cond, rate, burst, seed, queue_mode, params{}, versions[], config_sha256, medium, started_at, ended_at, status: done|failed, error?}`.
-`status: done` exige os 5 artefatos do C-NAME.
+**`meta.json`**: `{scenario, key, cond, rate, burst, seed, queue_mode, warmup, duration, params{}, versions[], config_sha256, medium, started_at, ended_at, status: done|failed, error?, cpu_pct?, zone_states?}`.
+`status: done` exige os 5 artefatos do C-NAME. `warmup` e `duration` (s, no nível do objeto) definem a janela do ataque; `cpu_pct` e `zone_states` são opcionais (ver "Métricas do consolidador").
 
 **`calibration.env`**: `LAMBDA`, `ATTACK_RATE`, `S3_IPS`, `E`, `F_COLOC`, `RCLI`, `HOST_LAN_IP` (opcional).
 
-**`results.csv`**: uma linha por corrida: chaves de `meta.json` + `containment_rps_refused`, `containment_rps_upstream`, `pft`, `pft_same_ip`, `pft_same_prefix`, `pft_control`, `goodput`, `p95`, `p99`, `cpu_pct`, `zone_states`, `late_events`, `computable`.
-`computable = false` quando falta o C1 pareado.
+**`results.csv`**: uma linha por corrida `status: done`: `run` (nome do diretório C-NAME), as chaves de `meta.json` (`scenario`, `key`, `cond`, `rate`, `burst`, `seed`, `queue_mode`) + `containment_rps_refused`, `containment_rps_upstream`, `pft`, `pft_same_ip`, `pft_same_prefix`, `pft_control`, `pft_threshold_1s`, `pft_threshold_2s`, `goodput`, `p95`, `p99`, `cpu_pct`, `zone_states`, `late_events`, `computable`.
+`computable = false` quando falta o C1 pareado. Coluna sem dado fica vazia, nunca zero. Gravado por `analysis/consolidate.py <corridas> [--out results/results.csv]`.
+
+## Métricas do consolidador
+
+Definições vigentes desde 2026-11-25 (ver "Mudança de contrato"). `analysis/consolidate.py` é o consumidor; o Runner grava os campos de `meta.json`.
+
+- **Janela do ataque:** `[warmup, warmup + duration)`, em segundos desde o tempo zero. Vale também para C1 e C3, que não têm ataque, para que o denominador seja o mesmo conjunto em todas as condições.
+- **Sobreposição:** a transação legítima `[t_start, t_end]` conta quando `t_start < fim` e `t_end > início`. A que começa antes do ataque e só termina dentro dele foi atendida sob ataque; a que termina exatamente quando ele começa não o enfrentou; a que começa no instante final não chegou a concorrer. O legítimo grava todos os eventos; os anteriores a `warmup` ficam fora por esta regra.
+- **Casamento:** `ordem` é a posição da transação na agenda do cliente, obtida ordenando os registros de cada `cid` por `t_plan`; a ordem das linhas do arquivo não importa. O par C1 ↔ Cx é (`scenario`, `seed`) e só pode haver um C1 `done` por par. `t_plan` diferente num par é agenda diferente e transação de C1 ausente em Cx é corrida incompleta: os dois casos abortam com erro, nunca viram pft.
+- **Denominador:** quantidade de transações de C1 dentro da janela, pelos tempos de C1; atraso ou deslocamento em Cx não muda o conjunto. **Numerador:** quantidade dessas que falharam em Cx. `pft = numerador ÷ denominador`. Janela sem transação em C1 deixa `pft` vazio.
+- **Falha de transação:** `outcome ≠ ok` do `legit.jsonl` (espera parcial, transação total, nenhum dado, 429, reset e 401 no K3) **ou** `t_end − t_start ≥ limiar`. O limiar nominal é 4 s (`pft`, `pft_same_ip`, `pft_same_prefix`, `pft_control`); `pft_threshold_1s` e `pft_threshold_2s` repetem a conta com 1 s e 2 s sobre os mesmos pares. O `outcome` do atacante nunca entra no pft.
+- **Linha de C1:** pareada com ela mesma; o pft dela é a própria fração de falhas (é o número que o G9 exige ≤ 1%), e é 0 quando nenhuma transação falhou.
+- **Sem C1 pareado:** `computable = false` e as colunas `pft*` vazias; o denominador nunca é estimado. Corrida `status: failed` não vira linha e não serve de C1.
+- **`containment_rps_refused`:** transações do atacante com `outcome = fail_refused` (401, 429 ou falha de conexão) e `t_start` na janela, divididas por `duration`.
+- **`containment_rps_upstream`:** linhas do `nginx.access.log` com `$upstream_response_time ≠ "-"`, divididas por `duration`. Cobre o log inteiro e inclui as requisições do legítimo, que o C-LOG não distingue das do atacante.
+- **`goodput`:** transações legítimas da própria corrida dentro da janela que não falharam no limiar de 4 s, divididas por `duration`.
+- **`p95`, `p99`:** latência (`t_end − t_start`) das transações legítimas da janela, percentil linear do numpy. Em `nodelay` só entram as aceitas (`outcome ≠ fail_refused`); a recusa fica de fora e segue contando no pft. Em `delay` entram todas. Sem transação elegível ficam vazios.
+- **`late_events`:** transações legítimas da janela com `late_ms > 50` (o mesmo limite do Req 7.5). São contadas e informadas, não excluídas do pft.
+- **`cpu_pct`** (opcional em `meta.json`, número): uso médio de CPU do processo do Nginx durante a janela, em % (100 = um núcleo inteiro). Ausente: coluna vazia.
+- **`zone_states`** (opcional em `meta.json`): objeto `{zona: fração}` com a fração de estados ocupados no fim da janela, cada valor em `[0, 1]`. Zonas: `k1`, `k2` e, no K3, `k3_ceiling` (teto por prefixo), `k3_client` (por cliente) e `k3_emit` (emissão em `/token`). Vai para o CSV como JSON ordenado por chave. Ausente: coluna vazia.
 
 ## C-NET: rede sintética (valores fixos)
 
@@ -203,3 +222,4 @@ Qualquer alteração depois do congelamento é registrada neste arquivo, com dat
 | 2026-11-24 | Formato da agenda | Seção acrescentada: JSON da agenda do legítimo, regra de origem e grupo por cenário, flags extras `--partial-timeout`/`--total-timeout` e classificação de `outcome` do legítimo | legítimo (T9), consolidador, runner |
 | 2026-11-24 | Formato da agenda | `outcome` do legítimo fixado por situação (dial/servidor mudo = `fail_partial`, EOF sem dados = `fail_total`, `RST`/`EPIPE`/`ECONNRESET`/`ECONNREFUSED` = `fail_refused`); verificação de `src` antes da corrida; flags `--token-path`, `--token-concurrency` e `--token-deadline` (token adquirido antes do tempo zero, `X-Token` em `/api`, renovação aos 270 s), referenciando o contrato do token K3; corrida interrompida descartada | legítimo (T9), consolidador, runner |
 | 2026-11-25 | Formato da agenda (legítimo) | `--token-deadline` por cliente substituído por um deadline global do prefetch (o `--start-at`, ou `agora + --total-timeout` quando ele é 0), mantendo `--token-concurrency`; corpo de token limitado a 4096 bytes; `--start-at` já vencido deixa os clientes sem token e o atraso sai em `late_ms` | legítimo (T9), runner, consolidador |
+| 2026-11-25 | `meta.json`, `results.csv` | Seção "Métricas do consolidador" acrescentada: janela `[warmup, warmup + duration)`, regra de sobreposição, casamento por (`scenario`, `seed`) e (`cid`, ordem), falha por `outcome` ou limiar, contenção, goodput, p95/p99, `late_events`; `meta.json` passa a exigir `warmup` e `duration` e aceita `cpu_pct` e `zone_states`; `results.csv` ganha `run`, `pft_threshold_1s` e `pft_threshold_2s` | consolidador (`analysis/consolidate.py`), runner (a gravar os campos) |
