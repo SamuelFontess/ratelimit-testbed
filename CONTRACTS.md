@@ -25,9 +25,12 @@ Flags idênticas em atacante e legítimo:
 --rate <reqps>            # atacante: taxa agregada; legítimo: ignorado (usa agenda)
 --schedule <path>         # legítimo: agenda pré-computada; atacante: pool de IPs/params
 --out <path.jsonl>        # uma linha JSON por transação: {t_start,t_end,status,outcome}
+--start-at <unix_ms>      # instante absoluto do tempo zero; 0 = o gerador define o zero ao terminar o prefetch de tokens
 ```
 
 - `outcome ∈ {ok, fail_partial, fail_total, fail_refused}`.
+- `--start-at` é o tempo zero comum de atacante e legítimo: `t_start`/`t_end` são segundos desde esse instante. O runner o define como agora + margem que cobre o prefetch de tokens (K3). Se o prefetch não terminar antes dele, o atacante aborta com exit != 0; o legítimo segue com os clientes sem token (401 conta falha) e o atraso aparece em `late_ms`.
+- O `outcome` do atacante mede acesso concedido × contido e não é comparável ao do legítimo; o pft usa só o do legítimo.
 - Saída determinística dada a seed.
 
 ## C-NAME: diretório de uma corrida
