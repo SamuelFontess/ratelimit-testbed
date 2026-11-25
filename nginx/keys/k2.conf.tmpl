@@ -1,13 +1,4 @@
-map $binary_remote_addr $k2key {
-    ~(?s)^(...).\z $1;
-    ~(?s)^(........)........\z $1;
-    default $remote_addr;
-}
-
-map $k2key $k2key_safe {
-    ~(?s)^(.+)\z $1;
-    default EMPTY_$remote_addr;
-}
+include ${RUN_DIR}/k2_prefix.conf;
 
 limit_req_zone $k2key_safe zone=k2:${ZONE_SIZE} rate=${R}r/s;
 
