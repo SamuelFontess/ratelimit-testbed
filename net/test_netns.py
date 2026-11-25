@@ -330,6 +330,12 @@ sleep 120
 """
 
 
+# Em segundo plano o bash herda SIGINT ignorado, e bash não trapeia sinal ignorado na entrada.
+def restaura_sinais():
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def test_sigint_no_meio_do_setup_desfaz_a_rede(limpo, tmp_path):
     sysctl = tmp_path / "sysctl"
     marcador = tmp_path / "chamou"
@@ -337,6 +343,7 @@ def test_sigint_no_meio_do_setup_desfaz_a_rede(limpo, tmp_path):
     sysctl.chmod(0o755)
     pid, fd = pty.fork()
     if pid == 0:
+        restaura_sinais()
         os.execvp(
             "sudo",
             [
@@ -369,6 +376,7 @@ def test_sigterm_no_setup_sai_130(limpo):
     processo = subprocess.Popen(
         ["bash", "-c", f'source "{SETUP}"\n(echo pronto; exec sleep 30) & wait'],
         start_new_session=True,
+        preexec_fn=restaura_sinais,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
