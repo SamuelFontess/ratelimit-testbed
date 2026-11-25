@@ -28,12 +28,12 @@ Se o IPv6 sintético falhar (G5 ou G2 em v6), S2 vira modelo analítico, sem cab
 
 | Parâmetro | Valor | Origem | O que garante |
 |---|---|---|---|
-| pft | `1 − sucesso ÷ transações que teriam sido iniciadas sem ataque`; só transações sobrepostas ao ataque | Mirkovic 2009, §III-C | Cliente que espera a resposta não é favorecido por fazer menos transações |
+| pft | `1 − sucesso ÷ transações que teriam sido iniciadas sem ataque`; só transações sobrepostas à janela `[warmup, warmup + duration)`; denominador e conjunto vêm do C1 da mesma seed (regra em `CONTRACTS.md`, "Métricas do consolidador") | Mirkovic 2009, §III-C | Cliente que espera a resposta não é favorecido por fazer menos transações |
 | Falha de transação | espera parcial > 4 s, transação > 60 s, nenhum dado | Mirkovic 2009, Tabela I | Referência citável |
 | 429 conta como falha | sim | **extensão nossa** (Mirkovic não conta) | Recusar legítimo é o dano que medimos |
 | Limiar rígido | sensibilidade com 1–2 s | nossa | Mostra se a ordem das chaves depende do limiar |
 | Legítimo open-loop | dispara no instante da agenda sem esperar a resposta | exigência do pft | Evita encolher o tráfego legítimo sob atraso |
-| `late_ms` > 50 ms | registrado por transação | nossa | Detecta o gerador falhando em cumprir a agenda |
+| `late_ms` > 50 ms | registrado por transação e contado em `late_events` | nossa | Detecta o gerador falhando em cumprir a agenda |
 | Reiniciar o Nginx a cada corrida | sim | spec §5: estado sobrevive a `reload` | Nenhum contador herdado |
 | `nodelay` | sim; 1 ponto de S1 com `delay` | cenário API | Recusa vira falha explícita |
 | Uma chave por corrida | sim | design | CPU e memória por chave não se misturam |
