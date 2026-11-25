@@ -164,6 +164,29 @@ Cada requisição que termina vira uma linha com `outcome`, decidido por `classi
 - A resposta preserva o `status` mesmo quando o desfecho é `fail_partial` ou `fail_total`; só erro sem resposta zera o `status`.
 - O `outcome` do atacante mede acesso concedido × contido e não é comparável ao do legítimo; o `pft` usa só o do legítimo.
 
+## Formato da agenda
+
+`schedule.py --seed --scenario --lam --clients --dur --out` grava `{"clients":[{"cid","src","group"}],"events":[{"t","cid"}]}`; `events` ordenado por `t` (segundos desde o início da corrida) e tudo derivado só da seed. Cada cliente tem taxa de Poisson `lam / clients`. Opções: `--control-fraction` (padrão 0,1) e `--colocate-fraction` (padrão 0).
+
+- Grupo controle: os primeiros `max(1, round(control_fraction × N))` clientes, `group=control`, em `10.67.0.0/16` (`fd12:3456:789b::/48` em `s2a`).
+- `s1`: demais em `10.66.0.0/16`, `group=same_ip` (o SNAT os reduz a um IPv4).
+- `s2a`: demais em `fd12:3456:789a:1::/64`, `group=same_prefix`.
+- `s3`: cada cliente em um `/24` próprio (`10.66.<1+i>.1`, controle em `10.67.<i>.1`), `group=control`. Os `round(colocate_fraction × demais)` primeiros dos demais ficam no `/24` do atacante `10.66.0.0/24` (`10.66.0.<1+j>`), `group=same_prefix`. O pool do atacante em S3 deve incluir `10.66.0.0/24` e evitar os `/24` dos clientes de controle.
+- IPv4 e IPv6 nunca se misturam numa corrida; o `--target` do legítimo precisa ser alcançável pela família da agenda (`LISTEN_HOST` em `s1`/`s3`, `LISTEN6_HOST` em `s2a`).
+
+O legítimo (`legit`) ignora `--seed --scenario --duration --warmup --rate`, grava todos os eventos (o consolidador descarta o warmup lido de `meta.json`) e aceita `--partial-timeout` (padrão 4 s), `--total-timeout` (padrão 60 s), `--token-path` e `--token-concurrency`. `outcome`:
+
+| Situação observada | `outcome` |
+|---|---|
+| Resposta 2xx completa dentro dos limites | `ok` |
+| Timeout de conexão (dial); servidor que aceita e não envia nada, ou para de enviar, por mais que o limite parcial | `fail_partial` |
+| Transação maior que o limite total; fechamento sem nenhum dado (EOF) | `fail_total` |
+| Status fora de 2xx (429, 401, 500, ...); `RST`, `ECONNRESET`, `EPIPE` ou `ECONNREFUSED` | `fail_refused` |
+
+Antes de disparar o primeiro evento o legítimo confere cada `src` da agenda: IP que o namespace não consegue usar como origem, ou família diferente da do `--target` quando ele é IP literal, aborta a corrida com erro (código 1) citando o IP, em vez de virar `fail_total`. O `--out` é criado antes da corrida, mas `legit.jsonl` só é gravado ao fim: uma corrida interrompida (SIGINT ou kill) é descartada e o runner a marca como inválida.
+
+Token (K3, ver "Contrato do token K3"): com `--token-path` (padrão vazio = sem token; K1, K2, C1 e C4 não mudam), o token é adquirido antes do tempo zero, fora do caminho medido: para cada cliente da agenda, `GET <target><token-path>?cid=<cid decimal>` pelo mesmo bind de origem, transporte e limites do cliente, com no máximo `--token-concurrency` buscas simultâneas (padrão 16, para não formar rajada). O prefetch tem um único deadline global: o `--start-at` quando ele é diferente de zero, senão `agora + --total-timeout`; assim o atraso do prefetch nunca passa do tempo zero combinado com o atacante. Em falha (429, erro, corpo que não seja um token: vazio, com espaço ou byte de controle, ou acima de 4096 bytes) a busca é repetida com intervalo de 250 ms até esse deadline; esgotado o prazo o cliente fica sem token, o `/api` dele responde 401 e conta como falha do cliente, e os eventos atrasados aparecem em `late_ms`, sem abortar a corrida. Com `--start-at` já vencido ao fim do prefetch, a busca nem chega a ser tentada e todos os clientes ficam sem token. A emissão limitada por E afeta quem consegue token, não a latência dos eventos, e `t_start`, `t_end` e `late_ms` nunca incluem a busca. O tempo zero do legítimo é o `--start-at` quando definido (o prefetch termina antes dele e o gerador espera até ele) e, quando `--start-at` é 0, o instante em que o prefetch termina; ele nunca é fixado antes do prefetch. `t_start`/`t_end` são segundos desde esse tempo zero, e atacante e legítimo ficam sincronizados recebendo o mesmo `--start-at` (o runner passa `agora + margem` que cobre o prefetch). Os eventos enviam `X-Token: <token>` em `/api` sem buscar nada; só a renovação de um token com mais de 270 s (margem sob os 300 s de validade) ocorre durante a corrida, em segundo plano, uma por cliente, sem segurar evento nenhum (os demais eventos seguem com o token anterior) e, se falhar, não é repetida antes de `--partial-timeout`. A busca não é transação do `pft` (não gera linha em `legit.jsonl`) e a corrida registra no stderr quantas buscas falharam.
+
 ## Mudança de contrato
 
 Qualquer alteração depois do congelamento é registrada neste arquivo, com data, e todos os consumidores são atualizados no mesmo commit.
@@ -177,3 +200,6 @@ Qualquer alteração depois do congelamento é registrada neste arquivo, com dat
 | 2026-11-24 | C-CLI (atacante) | Seções "Flags do atacante" (todas as flags, chave K3, origens) e "Classificação de desfecho do atacante" acrescentadas | atacante (T8) |
 | 2026-11-25 | C-CLI (atacante) | Flag `--start-at` (tempo zero comum), teto de `--token-budget` (1000) e janela de 270 s do token registrados na seção "Flags do atacante"; `--total-timeout` deixa de citar `ResponseHeaderTimeout` (o deadline do ctx cobre) | atacante (T8), legítimo (T9) |
 | 2026-11-25 | C-CLI (atacante) | Tabela "Classificação de desfecho do atacante" alinhada ao `classify` de `send.go`; declarado que o `outcome` do atacante não é comparável ao do legítimo | atacante (T8), legítimo (T9), análise |
+| 2026-11-24 | Formato da agenda | Seção acrescentada: JSON da agenda do legítimo, regra de origem e grupo por cenário, flags extras `--partial-timeout`/`--total-timeout` e classificação de `outcome` do legítimo | legítimo (T9), consolidador, runner |
+| 2026-11-24 | Formato da agenda | `outcome` do legítimo fixado por situação (dial/servidor mudo = `fail_partial`, EOF sem dados = `fail_total`, `RST`/`EPIPE`/`ECONNRESET`/`ECONNREFUSED` = `fail_refused`); verificação de `src` antes da corrida; flags `--token-path`, `--token-concurrency` e `--token-deadline` (token adquirido antes do tempo zero, `X-Token` em `/api`, renovação aos 270 s), referenciando o contrato do token K3; corrida interrompida descartada | legítimo (T9), consolidador, runner |
+| 2026-11-25 | Formato da agenda (legítimo) | `--token-deadline` por cliente substituído por um deadline global do prefetch (o `--start-at`, ou `agora + --total-timeout` quando ele é 0), mantendo `--token-concurrency`; corpo de token limitado a 4096 bytes; `--start-at` já vencido deixa os clientes sem token e o atraso sai em `late_ms` | legítimo (T9), runner, consolidador |
