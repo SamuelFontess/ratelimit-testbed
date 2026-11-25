@@ -94,3 +94,60 @@ def test_gate_falha_quando_o_teardown_falha(tmp_path):
     )
     assert resultado.returncode == 1, resultado.stdout
     assert "FAIL teste: netns-teardown.sh saiu com 3" in resultado.stdout
+
+
+def test_g1_ct_loss_tolera_ate_o_limite(tmp_path):
+    codigo = """
+ct_loss_ok "drop +1 insert_failed +0 early_drop +0" 10000 0.0001 && echo abaixo
+ct_loss_ok "drop +0 insert_failed +1 early_drop +0" 10000 0.0001 && echo limite
+ct_loss_ok "drop +1 insert_failed +1 early_drop +0" 10000 0.0001 || echo acima
+ct_loss_ok "drop +0 insert_failed +0 early_drop +1" 1000000 0.0001 || echo early_drop
+"""
+    resultado = bash(G1, codigo, tmp_path, G1_RATE="")
+    assert resultado.returncode == 0, resultado.stderr
+    assert resultado.stdout.split() == ["abaixo", "limite", "acima", "early_drop"]
+
+
+def test_g1_ct_loss_numbers_mostram_perda_e_fracoes(tmp_path):
+    resultado = bash(
+        G1,
+        'ct_loss_numbers "drop +1 insert_failed +1 early_drop +0" 119978 0.0001',
+        tmp_path,
+        G1_RATE="",
+    )
+    assert resultado.returncode == 0, resultado.stderr
+    assert resultado.stdout.strip() == (
+        "drop +1 insert_failed +1 early_drop +0 "
+        "(2 de 119978 conexões = 0,0017%, máximo 0,01%)"
+    )
+
+
+def test_g1_ct_loss_fraction_padrao_e_variavel(tmp_path):
+    padrao = bash(
+        G1,
+        'printf "%s" "$CT_LOSS_MAX_FRACTION"',
+        tmp_path,
+        G1_RATE="",
+        G1_CT_LOSS_MAX_FRACTION="",
+    )
+    trocado = bash(
+        G1,
+        'printf "%s" "$CT_LOSS_MAX_FRACTION"',
+        tmp_path,
+        G1_RATE="",
+        G1_CT_LOSS_MAX_FRACTION="0.5",
+    )
+    assert padrao.stdout == "0.0001"
+    assert trocado.stdout == "0.5"
+
+
+def test_g1_ct_loss_fraction_invalida_e_rejeitada(tmp_path):
+    resultado = bash(
+        G1,
+        'gate_fraction G1_CT_LOSS_MAX_FRACTION "$CT_LOSS_MAX_FRACTION"',
+        tmp_path,
+        G1_RATE="",
+        G1_CT_LOSS_MAX_FRACTION="1.5",
+    )
+    assert resultado.returncode != 0
+    assert "G1_CT_LOSS_MAX_FRACTION=1.5 inválido" in resultado.stdout

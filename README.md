@@ -103,7 +103,7 @@ sudo -n bash net/netns-setup.sh s1      # gen + veth + rotas; s1 acrescenta o SN
 sudo -n bash net/netns-teardown.sh      # remove tudo; código 0 quando nada existe
 ```
 
-Os gates de rede rodam como usuário comum (eles chamam `sudo -n`) e sobem alvo, Nginx e atacante sozinhos: `spike/g1_snat.sh` (padrão de 2.000 conexões/s por 60 s em S1; `G1_RATE` explícito vence, senão vale o `ATTACK_RATE` de `calibration.env`, e `G1_DURATION` ajusta a janela) e `spike/g5_freebind.sh` (mil origens IPv4 e mil IPv6 distintas no `access.log`). Eles usam as portas 18090 e 18091. `net/fw-windows.ps1` abre a entrada TCP 8081 a 8083 no firewall do Windows; precisa de uma sessão de administrador.
+Os gates de rede rodam como usuário comum (eles chamam `sudo -n`) e sobem alvo, Nginx e atacante sozinhos: `spike/g1_snat.sh` (padrão de 2.000 conexões/s por 60 s em S1, com `drop+insert_failed` do conntrack tolerado até 0,01% das conexões entregues; `G1_RATE` explícito vence, senão vale o `ATTACK_RATE` de `calibration.env`, e `G1_DURATION` ajusta a janela) e `spike/g5_freebind.sh` (mil origens IPv4 e mil IPv6 distintas no `access.log`). Eles usam as portas 18090 e 18091. `net/fw-windows.ps1` abre a entrada TCP 8081 a 8083 no firewall do Windows; precisa de uma sessão de administrador.
 
 O tráfego de `gen` entra no namespace raiz pela `veth-h`. Quando a cadeia `INPUT` fecha o resto (imagem de nuvem com a cadeia `INPUT` terminada em `REJECT`/`DROP` ou com política `DROP`), o setup insere `iptables -I INPUT 1 -i veth-h -m comment --comment testbed-veth-h -j ACCEPT` — e o equivalente em `ip6tables` sob o mesmo critério —, e o teardown remove só essa regra: é a única alteração que os scripts de `net/` fazem nas tabelas do sistema.
 

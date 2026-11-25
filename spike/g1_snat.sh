@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Gate G1: em S1, G1_RATE conexões novas/s por G1_DURATION s chegam ao Nginx todas vindas do IPv4 do
-# SNAT, sem EADDRNOTAVAIL e sem descarte de conntrack. Sem G1_RATE, vale o ATTACK_RATE de
-# calibration.env e, sem ele, o padrão de 2000/s. Parâmetros: G1_RATE, CALIBRATION_ENV, G1_DURATION,
-# G1_MIN_FRACTION (fração da taxa exigida) e G1_PORT.
+# SNAT, sem EADDRNOTAVAIL e com drop+insert_failed do conntrack até uma fração das conexões
+# entregues, mas early_drop zero. Sem G1_RATE, vale o ATTACK_RATE de calibration.env e, sem ele, o
+# padrão de 2000/s. Parâmetros: G1_RATE, CALIBRATION_ENV, G1_DURATION, G1_MIN_FRACTION (fração da
+# taxa exigida), G1_CT_LOSS_MAX_FRACTION (fração de perda tolerada) e G1_PORT.
 
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -10,7 +11,9 @@ source "$HERE/gate_lib.sh"
 
 GATE_NAME=G1
 readonly DEFAULT_RATE=2000
+readonly DEFAULT_CT_LOSS_MAX_FRACTION=0.0001
 readonly CALIBRATION_ENV=${CALIBRATION_ENV:-$GATE_ROOT/calibration.env}
+CT_LOSS_MAX_FRACTION=${G1_CT_LOSS_MAX_FRACTION:-$DEFAULT_CT_LOSS_MAX_FRACTION}
 DURATION=${G1_DURATION:-60}
 MIN_FRACTION=${G1_MIN_FRACTION:-0.95}
 PORT=${G1_PORT:-18091}
@@ -33,14 +36,45 @@ log_stats() {
     END { printf "%d %d %.1f\n", in_window, foreign + 0, in_window / duration }' "$ACCESS_LOG"
 }
 
+# $1 = delta do conntrack em gen; imprime `drop insert_failed early_drop`.
+ct_counts() {
+  awk '{
+    for (i = 1; i <= NF; i += 2) v[$i] = $(i+1)
+    print v["drop"] + 0, v["insert_failed"] + 0, v["early_drop"] + 0
+  }' <<<"$1"
+}
+
+# $1 = delta, $2 = conexões na janela, $3 = fração máxima: zero quando só drop+insert_failed
+# ficaram dentro da tolerância e early_drop é zero.
+ct_loss_ok() {
+  local drop insert early
+  read -r drop insert early <<<"$(ct_counts "$1")"
+  (( early == 0 )) || return 1
+  (( $2 > 0 )) || return 1
+  awk -v lost="$((drop + insert))" -v delivered="$2" -v max="$3" \
+    'BEGIN { exit !(lost <= max * delivered) }'
+}
+
+# $1 = delta, $2 = conexões na janela, $3 = fração máxima; imprime a perda com a fração medida.
+ct_loss_numbers() {
+  local drop insert early lost
+  read -r drop insert early <<<"$(ct_counts "$1")"
+  lost=$((drop + insert))
+  awk -v d="$drop" -v i="$insert" -v e="$early" -v l="$lost" -v n="$2" -v m="$3" 'BEGIN {
+    printf "drop +%d insert_failed +%d early_drop +%d (%d de %d conexões = %.4f%%, máximo %.2f%%)\n", \
+      d, i, e, l, n, (n > 0 ? 100 * l / n : 0), 100 * m
+  }' | tr '.' ','
+}
+
 main() {
   local ct_before ct_after ct_root_before ct_root_after ct_delta ct_root_delta
-  local in_window foreign achieved min_rate falhas_bind
+  local in_window foreign achieved min_rate falhas_bind ct_line
   local problems=() numbers=()
 
   gate_int G1_RATE "$RATE" 1
   gate_int G1_DURATION "$DURATION" 1
   gate_fraction G1_MIN_FRACTION "$MIN_FRACTION"
+  gate_fraction G1_CT_LOSS_MAX_FRACTION "$CT_LOSS_MAX_FRACTION"
   gate_int G1_PORT "$PORT" $MIN_PORT
   gate_sudo
   gate_need go jq curl conntrack "$NGINX"
@@ -59,10 +93,10 @@ main() {
   wait "$NGINX_PID" 2>/dev/null
   NGINX_PID=
 
-  ct_delta=$(gate_conntrack_delta "$ct_before" "$ct_after") ||
-    problems+=("descarte de conntrack em $NETNS: $ct_delta")
+  ct_delta=$(gate_conntrack_delta "$ct_before" "$ct_after") || true
   ct_root_delta=$(gate_conntrack_delta "$ct_root_before" "$ct_root_after" || true)
   read -r in_window foreign achieved < <(log_stats)
+  ct_line=$(ct_loss_numbers "$ct_delta" "$in_window" "$CT_LOSS_MAX_FRACTION")
   min_rate=$(awk -v r="$RATE" -v f="$MIN_FRACTION" 'BEGIN { printf "%.1f", r * f }')
   falhas_bind=$(grep -c EADDRNOTAVAIL "$GATE_TMP/attacker.err" || true)
 
@@ -70,13 +104,16 @@ main() {
   (( falhas_bind == 0 )) || problems+=("$falhas_bind EADDRNOTAVAIL no atacante")
   (( in_window > 0 )) || problems+=("o Nginx não registrou conexão alguma")
   (( foreign == 0 )) || problems+=("$foreign linhas do access.log com origem fora de $GEN_V4")
+  if (( in_window > 0 )) && ! ct_loss_ok "$ct_delta" "$in_window" "$CT_LOSS_MAX_FRACTION"; then
+    problems+=("descarte de conntrack em $NETNS: $ct_line")
+  fi
   awk -v a="$achieved" -v m="$min_rate" 'BEGIN { exit !(a >= m) }' ||
     problems+=("$achieved conexões/s das $RATE/s exigidas, mínimo $min_rate/s")
 
   numbers+=("$achieved conexões/s de $RATE/s exigidas em ${DURATION}s ($in_window no access.log)")
   numbers+=("origem única: $GEN_V4, $foreign linhas fora dela")
   numbers+=("EADDRNOTAVAIL: $falhas_bind")
-  numbers+=("conntrack em $NETNS: $ct_delta; na raiz: $ct_root_delta")
+  numbers+=("conntrack em $NETNS: $ct_line; na raiz: $ct_root_delta")
   numbers+=("outcomes do atacante: $(gate_outcomes "$GATE_TMP/attacker.jsonl")")
   numbers+=("$(gate_sample_summary)")
   if (( ${#problems[@]} == 0 )); then gate_pass "$(gate_join "${numbers[@]}")"; fi
