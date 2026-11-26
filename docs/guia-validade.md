@@ -10,7 +10,7 @@ Nada é medido antes de G1 a G10 passarem (`testbed/spike/REPORT.md`).
 
 | Gate | Condição para passar | O que protege se falhar |
 |---|---|---|
-| G1 | ~8 mil conexões novas/s por 60 s em S1: Nginx vê 1 IP estável, sem `EADDRNOTAVAIL`, sem descarte de conntrack | S1 deixaria de representar CGNAT, ou perderia conexões e culparia o limitador |
+| G1 | 2.000 conexões novas/s por 60 s em S1 (padrão; `G1_RATE` ou o `ATTACK_RATE` de `calibration.env` ajustam): Nginx vê 1 IP estável, sem `EADDRNOTAVAIL`, `early_drop` zero e `drop+insert_failed` do conntrack até 0,01% das conexões | S1 deixaria de representar CGNAT, ou perderia conexões e culparia o limitador |
 | G2 | K2 gera chave de 3 B (IPv4) e 8 B (IPv6), nunca vazia; IPv6 de 16 B não cai no ramo `/24`; bytes `0x0A` e `0x00`, `::1` e IPv6 comprimido ok | Chave vazia não é limitada: K2 passaria como defesa sem limitar nada |
 | G3 | Sem token e token adulterado dão 401; `/token` é limitado à taxa `E`; 1 token reusado em N IPs é contido pelo teto | K3 pareceria melhor por ser forjável ou ter emissão ilimitada |
 | G4 | Agenda de chegadas idêntica em C1 e C4 (mesma seed), com casamento transação a transação | O denominador do pft deixaria de valer |

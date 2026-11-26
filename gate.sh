@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gate das tarefas do testbed. Uso: gate.sh rapido|completo
 #   rapido   : Go e shell só do que mudou contra $GATE_BASE (padrão main); Python sempre.
-#   completo : tudo, mais env/check_env.sh.
+# completo : tudo, mais env/check_env.sh, os testes de rede e os gates G1 e G5.
 # Regra: se um componente existe, o passo dele é obrigatório. Passo ausente por falta do
 # componente aparece como SKIP e nunca esconde falha de componente existente.
 set -uo pipefail
@@ -81,10 +81,16 @@ done < <(find . -name go.mod -not -path './.venv/*')
 
 # 4. Python: se há testes, o venv é obrigatório. Fica fora do repo e é compartilhado entre
 #    worktrees: $TESTBED_VENV, padrão ~/.venvs/testbed (criado por env/setup.sh).
+#    Os testes de net/ precisam de sudo -n e do namespace gen: só no modo completo.
 VENV=${TESTBED_VENV:-$HOME/.venvs/testbed}
+PYTEST_EXTRA=()
+if [[ $MODE == rapido ]]; then
+  PYTEST_EXTRA=(--ignore=net)
+  skip rede "testes de rede e gates G1/G5 só no modo completo"
+fi
 if find . \( -name '*_test.py' -o -name 'test_*.py' \) -not -path './.venv/*' | grep -q .; then
   if [[ -x $VENV/bin/python ]]; then
-    step pytest "$VENV/bin/python" -m pytest -q -p no:cacheprovider
+    step pytest "$VENV/bin/python" -m pytest -q -p no:cacheprovider "${PYTEST_EXTRA[@]}"
   else
     echo "FAIL pytest (testes existem, mas o venv $VENV não existe: rode env/setup.sh)" | tee -a "$LOG"; FAIL=1
   fi
@@ -99,9 +105,12 @@ fi
 # 5. Nginx: config renderizada de cada chave precisa passar em nginx -t (entregue pela task do Nginx).
 if [[ -f nginx/check.sh ]]; then step nginx-config bash nginx/check.sh; else skip nginx-config "nginx/check.sh ainda não existe"; fi
 
-# 6. Completo: ambiente.
+# 6. Completo: ambiente, testes de rede e gates que precisam do namespace gen (sudo -n).
 if [[ $MODE == completo ]]; then
   if [[ -f env/check_env.sh ]]; then step ambiente bash env/check_env.sh; else skip ambiente "env/check_env.sh ainda não existe"; fi
+  for gate in spike/g1_snat.sh spike/g5_freebind.sh; do
+    if [[ -f $gate ]]; then step "gate:${gate##*/}" bash "$gate"; else skip "gate:${gate##*/}" "$gate ainda não existe"; fi
+  done
 fi
 
 echo "gate $MODE: $([[ $FAIL -eq 0 ]] && echo VERDE || echo VERMELHO)" | tee -a "$LOG"
